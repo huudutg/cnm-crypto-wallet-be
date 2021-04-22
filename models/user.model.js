@@ -1,16 +1,13 @@
+
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
-const ObjectId = Schema.ObjectId;
-
-const Info = new Schema({
-    name: String,
-    link: String,
-});
+// const ObjectId = Schema.ObjectId;
 
 const User = new Schema({
-    // _id: ObjectId,
-    id: String,
+    idSocial: String,
     name: String,
-    list: [Info],
+    password: String,
+    email: String,
+    joindate: Date
 });
 module.exports = mongoose.model('user', User)

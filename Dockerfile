@@ -4,7 +4,7 @@ COPY ./package.json /src/
 WORKDIR /src
 RUN npm install
 COPY . /src
-EXPOSE 3300
+EXPOSE 5000
 # RUN node ./bin/www
 # RUN chmod +x entrypoint.sh
 ENTRYPOINT ["npm", "start"]
