@@ -2,11 +2,22 @@
  * Title: Blockchain Project
  * Description: Blockchain data structure
  * Author: Mor Cohen
+  Object.values(transactions).forEach(transaction => {
+      if (block.isValidTransaction(transaction)) {
+        block.addTransaction(transaction);
+
+        // if we have the transaction as a pending one on the chain, remove it from the pending pool if we are at max height
+        if (isParentMaxHeight && this.pendingTransactions[transaction.hash])
+          delete this.pendingTransactions[transaction.hash];
+      } else {
+        containsInvalidTransactions = true;
+      }
+    });
  * Date: 21/9/18
  */
 const { v4: uuid } = require('uuid'); //generate unique transaction id.
 const sha256 = require('sha256');
-const currentNodeUrl = process.argv[3];
+const currentNodeUrl = "http://localhost:5000";
 
 
 /*function constructor for my Blockchain.*/
@@ -14,8 +25,9 @@ function Blockchain(socketID) {
     this.socketId = socketID;
     this.chain = [];
     this.pendingTransactions = [];
+    this.transactionsHistory = [];
     this.currentNodeUrl = currentNodeUrl;
-    this.networkNodes = [];
+    this.identities = {};
     this.createNewBlock(100, '0', '0'); //Genesis block.
 }
 
@@ -35,8 +47,14 @@ Blockchain.prototype.createNewBlock = function (nonce, previousBlockHash, hash) 
     return newBlock;
 }
 
+Blockchain.prototype.addIdentity = function (keyPair) {
+    this.identities[keyPair.publicKey] = keyPair;
+    return true;
+}
+
 /*returns the last block of the chain.*/
 Blockchain.prototype.getLastBlock = function () {
+    // console.log('%c this.chain', 'color: blue;', this.chain)
     return this.chain[this.chain.length - 1];
 }
 
@@ -45,7 +63,7 @@ Blockchain.prototype.createNewTransaction = function (amount, sender, recipient)
     const newTransaction = {
         transactionId: uuid().split('-').join(''),
         amount: amount,
-        date: new Date().getDay().toString() + "." + new Date().getMonth().toString() + "." + new Date().getFullYear().toString(),
+        date: new Date().toLocaleString('en-GB', { timeZone: 'UTC' }).toString(),
         sender: sender,
         recipient: recipient
     }

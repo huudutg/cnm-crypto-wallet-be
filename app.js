@@ -1,16 +1,5 @@
-/*
- * Title: Blockchain Project
- * Description: Api for the project
- * Author: Mor Cohen
- * Date: 21/9/18
- */
 
-
-///////////////////////////////////////////////////////////////////////////////////////////////
-/*  -Dependencies & Configurations-  */
-///////////////////////////////////////////////////////////////////////////////////////////////
 const express = require('express');
-const app = express();
 const bodyParser = require('body-parser');
 const Blockchain = require('./blockchain');
 const { v4: uuid } = require('uuid');//for keys
@@ -22,14 +11,45 @@ const sha256 = require('sha256');
 const fs = require('fs');
 const MongoClient = require('mongodb').MongoClient;
 const http = require('http');
-var server = http.createServer(app);
 var nodemailer = require('nodemailer');
 var forge = require('node-forge');
+var cors = require('cors')
+var indexRouter = require('./routes/index');
+var usersRouter = require('./routes/users');
+var elliptic = require('elliptic');
+const ec = new elliptic.ec("secp256k1");
+function generatePair(name) {
+    const keypair = ec.genKeyPair();
+    return {
+        name: name,
+        publicKey: keypair.getPublic("hex"),
+        privateKey: keypair.getPrivate("hex")
+    };
+}
+
+var { Server, Socket } = require('socket.io');
+
+// rest of the code remains same
+const app = express();
+
+// middlewares
+app.use(express.json());
+app.use(cors());
+app.use(bodyParser.json());
+
+// Server.buildServices(app);
+const server = http.createServer(app);
+
+const io = new Server(server, {
+    cors: {
+        origin: "http://localhost:3001",
+        credentials: true,
+    },
+    allowEIO3: true
+});
+
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";//fixing nodemailer
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-/*  -Initialize blockchain first time & create a master user-  */
-///////////////////////////////////////////////////////////////////////////////////////////////
 const backup = new Blockchain();
 const privateKey = uuid().split('-').join(''); //privateKey
 const public_key = sha256(privateKey); //publicKey
@@ -37,17 +57,11 @@ const master = backup.createNewTransaction(1000000, "system-reward", public_key)
 backup.chain[0].transactions.push(master);
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-/*  -Alert: the file 'masterKeysForDelete.txt' content need to be deleted after first init-  */
 fs.appendFileSync('masterKeysForDelete.txt', '\nprivateKey: ' + privateKey);
 fs.appendFileSync('masterKeysForDelete.txt', '\npublicKey: ' + public_key);
-/*  -Alert: the file 'masterKeysForDelete.txt' content need to be deleted after first init-  */
-///////////////////////////////////////////////////////////////////////////////////////////////
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-/*  -Create a database named "invitationsDB" on first time-  */
-///////////////////////////////////////////////////////////////////////////////////////////////
+
 var url = "mongodb://localhost:27017/invitationsDB";
 MongoClient.connect(url, function (err, db) {
     if (err) throw err;
@@ -82,22 +96,17 @@ MongoClient.connect(url, function (err, db) {
 ///////////////////////////////////////////////////////////////////////////////////////////////
 /*  -Configurations & server-  */
 ///////////////////////////////////////////////////////////////////////////////////////////////
-app.set('view engine', 'ejs');
-
 const port = process.env.PORT || 5000;
-
-app.use(express.static(path.join(__dirname, 'Front'))); //public
-app.use("/styles", express.static(__dirname + '/Front/assets'));//allow css in invitation page (public)
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
-var server = app.listen(port, function () {
+server.listen(port, function () {
     console.log('listening to port: ' + port);
 });
-app.get('/blockchain', (req, res) => {
-    res.send(backup);
-});
+// app.get('/blockchain', (req, res) => {
+//     res.send(backup);
+// });
 ///////////////////////////////////////////////////////////////////////////////////////////////
 /*  -find index of socket | For example : search((socket.id).toString(), nodes);-  */
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -112,24 +121,22 @@ function search(nameKey, myArray) {
 
 
 const nodes = [];
-var io = require('socket.io')(server);
 
 /*  -Socket.io-  */
 io.on('connection', (socket) => {
-
     /*  -On connection of socket-  */
     nodes.push(new Blockchain(socket.id));
     socket.emit('PT', backup.pendingTransactions);//emit to that specific socket
     console.log('New user connected');
     console.log(socket.id);
-
-
+    const room = io.sockets.adapter.rooms.get(socket.id);
     /*
     * Title: Broadcast Transanction section
     * Description: Init transaction for every endpoint.
     */
     app.post('/transaction/broadcast', (req, res) => {
 
+        console.log('%c req.body', 'color: blue;', req.body)
         const amount = parseFloat(req.body.amount);
         const newTransaction = nodes[nodes.length - 1].createNewTransaction(amount, req.body.sender, req.body.recipient);
         let flag = true;
@@ -166,10 +173,16 @@ io.on('connection', (socket) => {
             backup.addTransactionToPendingTransactions(newTransaction);//put new transaction in global object
             nodes.forEach(socketNode => {
                 socketNode.addTransactionToPendingTransactions(newTransaction);
-                io.clients().sockets[(socketNode.socketId).toString()].pendingTransactions = socketNode.pendingTransactions;//add property to socket
+                if (!room.sockets) {
+                    room.sockets = {}
+                }
+                if (!room.sockets[(socketNode.socketId).toString()]) {
+                    room.sockets[(socketNode.socketId).toString()] = {}
+                }
+                room.sockets[(socketNode.socketId).toString()].pendingTransactions = socketNode.pendingTransactions;//add property to socket
                 pt = socketNode.pendingTransactions;
             });
-            io.clients().emit('PT', pt);//emit to all sockets
+            io.emit('PT', backup);//emit to all sockets
             res.json({
                 note: `Transaction complete!`
             });
@@ -181,15 +194,15 @@ io.on('connection', (socket) => {
     * Title: Miner section
     * Description: user mine the last block of transaction by POW, getting reward and init a new block
     */
-    app.get('/mine', (req, res) => {
+    app.post('/mine', (req, res) => {
         const lastBlock = backup.getLastBlock();
         const previousBlockHash = lastBlock['hash'];
-
+        const recipient = req.body.recipient
         const currentBlockData = {
             transactions: backup.pendingTransactions,
             index: lastBlock['index'] + 1
         }
-
+        console.log('%c new Date()', 'color: blue;', new Date().toLocaleString('en-GB', { timeZone: 'UTC' }))
         const nonce = backup.proofOfWork(previousBlockHash, currentBlockData);//doing a proof of work
         const blockHash = backup.hashBlock(previousBlockHash, currentBlockData, nonce);//hash the block
         const newBlock = backup.createNewBlock(nonce, previousBlockHash, blockHash);//create a new block with params
@@ -208,13 +221,16 @@ io.on('connection', (socket) => {
                     body: {
                         amount: 12.5,
                         sender: "system-reward",
-                        recipient: public_key
+                        recipient
                     },
                     json: true
                 };
+                console.log('%c recipient', 'color: blue;', requestOptions)
                 return rp(requestOptions);
             })
             .then(data => {
+                backup.transactionsHistory = [...backup.transactionsHistory, ...currentBlockData.transactions]
+                io.emit('blockchain', backup);
                 res.json({
                     note: "New block mined and broadcast successfully",
                     block: newBlock
@@ -283,9 +299,14 @@ io.on('connection', (socket) => {
 * Title: generateKeyPair
 * Description: generateKeyPair
 */
-    var keyPair = forge.pki.rsa.generateKeyPair(1024);
-    app.get('/generateKeyPair', (req, res) => {
-        res.send(keyPair.publicKey);
+    app.post('/generateKeyPair', (req, res) => {
+        const privateKey = uuid().split('-').join(''); //privateKey
+        const publicKey = sha256(privateKey); //publicKey
+        // var keyPair = generatePair(req.body.name);
+        backup.addIdentity({ publicKey, privateKey, name: req.body.name })
+        const master = backup.createNewTransaction(100, "system-reward", publicKey);
+        backup.getLastBlock().transactions.push(master);
+        res.send({ publicKey, privateKey, name: req.body.name });
     });
 
     /*
@@ -293,12 +314,13 @@ io.on('connection', (socket) => {
     * Description: Authentication for private and public keys
     */
     app.post('/hashKeys', (req, res) => {
-        const k1 = req.body.key1;
+        const k2 = req.body.publicKey;
 
         //const k1 = keyPair.privateKey.decrypt(req.body.k1);
         //console.log(k1);
 
-        const k2 = req.body.key2;
+        const k1 = req.body.privateKey;
+        console.log('%c req.body', 'color: blue;', req.body)
         const privateKey_Is_Valid = sha256(k1) === k2;
 
         const addressData = backup.getAddressData(k2);
@@ -314,9 +336,7 @@ io.on('connection', (socket) => {
             });
         }
         else {
-            res.json({
-                note: true
-            });
+            res.json(addressData);
         }
 
     });
@@ -617,5 +637,6 @@ app.get('/address/:address', (req, res) => {
 app.get('/Front', (req, res) => {
     res.sendFile('./Front/index.html', { root: __dirname });
 });
-
+app.use('/', indexRouter);
+app.use('/users', usersRouter);
 module.exports = app;
