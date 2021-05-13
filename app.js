@@ -182,7 +182,8 @@ io.on('connection', (socket) => {
                 room.sockets[(socketNode.socketId).toString()].pendingTransactions = socketNode.pendingTransactions;//add property to socket
                 pt = socketNode.pendingTransactions;
             });
-            io.emit('PT', backup);//emit to all sockets
+            io.emit('blockchain', backup);
+            // io.emit('PT', backup);//emit to all sockets
             res.json({
                 note: `Transaction complete!`
             });
